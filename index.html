@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aplikasi Hafalan Juz 30</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0fdf4; /* emerald-50 */
+        }
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #10b981; 
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #059669; 
+        }
+    </style>
+</head>
+<body class="text-gray-800 antialiased min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="bg-emerald-600 text-white shadow-md w-full z-10 sticky top-0">
+        <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
+            <div class="flex items-center gap-2 font-bold text-lg cursor-pointer" id="nav-brand">
+                <i class="fas fa-quran"></i>
+                <span>Juz 30 Tracker</span>
+            </div>
+            <div id="nav-actions">
+                <!-- Logout button injected here if logged in -->
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <main id="app-container" class="flex-grow w-full max-w-md mx-auto p-4 flex flex-col relative pb-20"></main>
+
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="fixed top-16 right-1/2 translate-x-1/2 z-50 flex flex-col gap-2 w-full max-w-xs pointer-events-none"></div>
+
+    <script type="module">
+        // State Management
+        let state = {
+            view: 'LOGIN', // LOGIN, TEACHER_DASHBOARD, STUDENT_DASHBOARD
+            currentUserRole: null, // 'TEACHER' or 'STUDENT'
+            currentStudentId: null, // If logged in as student
+            students: [],
+            records: [],
+            selectedStudentForRecord: null // For teacher view
+        };
+
+        const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTM3Tas0JXkJA-WVTLUK5dB1DrJFE0uNyJwmztj8LRhaBl1Jfg3Wblp9Ur_7CZq5VctMXTZ7sccI0hV/pub?gid=0&single=true&output=csv";
+
+        const SURAHS = [
+            "An-Naba'", "An-Nazi'at", "'Abasa", "At-Takwir", "Al-Infitar", "Al-Mutaffifin", 
+            "Al-Inshiqaq", "Al-Buruj", "At-Tariq", "Al-A'la", "Al-Ghashiyah", "Al-Fajr", 
+            "Al-Balad", "Ash-Shams", "Al-Layl", "Ad-Duhaa", "Ash-Sharh", "At-Tin", 
+            "Al-'Alaq", "Al-Qadr", "Al-Bayyinah", "Az-Zalzalah", "Al-'Adiyat", "Al-Qari'ah", 
+            "At-Takathur", "Al-'Asr", "Al-Humazah", "Al-Fil", "Quraysh", "Al-Ma'un", 
+            "Al-Kawthar", "Al-Kafirun", "An-Nasr", "Al-Masad", "Al-Ikhlas", "Al-Falaq", "An-Nas"
+        ];
+
+        const GRADES = {
+            "A": { label: "Mumtaz (Sempurna)", color: "bg-emerald-100 text-emerald-800" },
+            "B": { label: "Jayyid Jiddan (Sangat Baik)", color: "bg-blue-100 text-blue-800" },
+            "C": { label: "Jayyid (Baik)", color: "bg-yellow-100 text-yellow-800" },
+            "D": { label: "Maqbul (Cukup)", color: "bg-orange-100 text-orange-800" },
+            "E": { label: "Dhaif (Kurang)", color: "bg-red-100 text-red-800" }
+        };
+
+        // DOM Elements
+        const appContainer = document.getElementById('app-container');
+        const navActions = document.getElementById('nav-actions');
+        const toastContainer = document.getElementById('toast-container');
+
+        // Initialize App
+        async function init() {
+            renderLoading("Memuat data dari Google Sheets...");
+            try {
+                await fetchCSVData();
+                render();
+            } catch (error) {
+                console.error("Initialization failed", error);
+                showToast("Gagal memuat data.", "error");
+                appContainer.innerHTML = `<div class="text-center mt-10 text-red-500">Terjadi kesalahan sistem. Silakan muat ulang halaman.</div>`;
+            }
+        }
+
+        // Fetch CSV Data
+        async function fetchCSVData() {
+            try {
+                const response = await fetch(CSV_URL);
+                const csvText = await response.text();
+                
+                // Parsing sederhana untuk CSV
+                const rows = csvText.split('\n').map(row => row.split(',').map(c => (c || '').trim().replace(/"/g, '')));
+                if (rows.length < 2) return; 
+
+                // Ambil baris pertama sebagai header untuk mencari indeks kolom
+                const headers = rows[0].map(h => h.toLowerCase());
+                
+                // Cari indeks kolom secara dinamis (fallback ke asumsi urutan jika header tidak spesifik)
+                const idxNama = headers.findIndex(h => h.includes('nama')) !== -1 ? headers.findIndex(h => h.includes('nama')) : 1;
+                const idxNis = headers.findIndex(h => h.includes('nis')) !== -1 ? headers.findIndex(h => h.includes('nis')) : 0;
+                const idxKelas = headers.findIndex(h => h.includes('kelas')) !== -1 ? headers.findIndex(h => h.includes('kelas')) : 2;
+
+                let studentsMap = new Map();
+                let parsedRecords = []; // Catatan dari sesi sebelumnya akan kosong dari CSV karena CSV ini khusus data siswa
+
+                for (let i = 1; i < rows.length; i++) {
+                    const cols = rows[i];
+                    // Skip jika baris kosong
+                    if (cols.length <= Math.max(idxNama, idxNis, idxKelas) && !cols[idxNama]) continue;
+
+                    const nama = cols[idxNama] || '';
+                    const nis = cols[idxNis] || '-';
+                    const kelas = cols[idxKelas] || '-';
+                    
+                    if (!nama) continue;
+
+                    // Gunakan NIS sebagai ID unik, jika tidak ada gunakan nama
+                    let studentId = nis !== '-' ? nis : nama.toLowerCase().replace(/\s+/g, '-');
+                    
+                    if (!studentsMap.has(studentId)) {
+                        studentsMap.set(studentId, { id: studentId, name: nama, nis: nis, kelas: kelas });
+                    }
+                }
+
+                state.students = Array.from(studentsMap.values());
+                state.records = parsedRecords;
+                
+                state.students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                
+            } catch (err) {
+                console.error("CSV Fetch Error:", err);
+                showToast("Gagal mengambil data CSV", "error");
+            }
+        }
+
+        // Router / Renderer
+        function render() {
+            appContainer.innerHTML = '';
+            navActions.innerHTML = '';
+
+            if (state.currentUserRole) {
+                navActions.innerHTML = `
+                    <button id="btn-logout" class="text-sm bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full transition">
+                        <i class="fas fa-sign-out-alt mr-1"></i> Keluar
+                    </button>
+                `;
+            }
+
+            switch (state.view) {
+                case 'LOGIN':
+                    renderLogin();
+                    break;
+                case 'TEACHER_DASHBOARD':
+                    renderTeacherDashboard();
+                    break;
+                case 'STUDENT_DASHBOARD':
+                    renderStudentDashboard();
+                    break;
+                default:
+                    renderLogin();
+            }
+        }
+
+        // --- VIEWS ---
+
+        function renderLoading(msg) {
+            appContainer.innerHTML = `
+                <div class="flex-grow flex flex-col items-center justify-center fade-in">
+                    <i class="fas fa-circle-notch fa-spin text-4xl text-emerald-600 mb-4"></i>
+                    <p class="text-gray-600">${msg}</p>
+                </div>
+            `;
+        }
+
+        function renderLogin() {
+            appContainer.innerHTML = `
+                <div class="flex-grow flex flex-col items-center justify-center fade-in space-y-6 pt-10">
+                    <div class="text-center mb-6">
+                        <div class="bg-emerald-100 text-emerald-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm">
+                            <i class="fas fa-book-open text-3xl"></i>
+                        </div>
+                        <h1 class="text-2xl font-bold text-gray-800">Selamat Datang</h1>
+                        <p class="text-gray-500 text-sm mt-1">Pilih peran Anda untuk masuk</p>
+                    </div>
+
+                    <div class="w-full space-y-4">
+                        <button id="show-teacher-login" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white p-4 rounded-xl shadow-md transition flex items-center justify-between group">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-white/20 p-2 rounded-lg group-hover:scale-110 transition">
+                                    <i class="fas fa-chalkboard-teacher text-xl"></i>
+                                </div>
+                                <div class="text-left">
+                                    <h2 class="font-bold text-lg">Masuk sebagai Guru</h2>
+                                    <p class="text-emerald-100 text-xs">Kelola dan nilai hafalan murid</p>
+                                </div>
+                            </div>
+                            <i class="fas fa-chevron-right opacity-70"></i>
+                        </button>
+
+                        <button id="show-student-login" class="w-full bg-white border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 text-gray-700 p-4 rounded-xl shadow-sm transition flex items-center justify-between group">
+                            <div class="flex items-center gap-3">
+                                <div class="bg-emerald-100 text-emerald-600 p-2 rounded-lg group-hover:scale-110 transition">
+                                    <i class="fas fa-user-graduate text-xl"></i>
+                                </div>
+                                <div class="text-left">
+                                    <h2 class="font-bold text-lg">Masuk sebagai Murid</h2>
+                                    <p class="text-gray-500 text-xs">Lihat catatan nilai hafalanmu</p>
+                                </div>
+                            </div>
+                            <i class="fas fa-chevron-right opacity-70"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Modals injected dynamically -->
+                <div id="login-modal-container"></div>
+            `;
+        }
+
+        function renderTeacherDashboard() {
+            appContainer.innerHTML = `
+                <div class="fade-in pb-10">
+                    <div class="mb-6 bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-start sm:items-center flex-col sm:flex-row gap-3">
+                        <div>
+                            <h2 class="text-lg font-bold text-gray-800 mb-1">Dashboard Guru</h2>
+                            <p class="text-sm text-gray-500">Kelola hafalan Juz 30 murid-murid Anda.</p>
+                        </div>
+                        <div class="flex gap-2 w-full sm:w-auto mt-3 sm:mt-0">
+                            <button id="btn-copy-sheets" class="bg-blue-600 text-white border border-blue-700 hover:bg-blue-700 px-3 py-2 rounded-lg text-sm font-bold transition shadow-md flex items-center gap-2 flex-1 sm:flex-none justify-center">
+                                <i class="fas fa-copy"></i> Salin Data
+                            </button>
+                            <button id="btn-export-csv" class="bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 px-3 py-2 rounded-lg text-sm font-bold transition shadow-md flex items-center gap-2 flex-1 sm:flex-none justify-center">
+                                <i class="fas fa-file-excel"></i> Download CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tabs -->
+                    <div class="flex border-b border-gray-200 mb-4">
+                        <button id="tab-list" class="flex-1 py-2 text-center font-semibold text-emerald-600 border-b-2 border-emerald-600">Daftar Murid</button>
+                        <button id="tab-add" class="flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent hover:text-emerald-600 transition">Catat Hafalan</button>
+                    </div>
+
+                    <div id="teacher-content" class="min-h-[300px]">
+                        ${getStudentsListHTML()}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getStudentsListHTML() {
+            let html = `
+                <div class="mb-4 flex gap-2">
+                    <input type="text" id="new-student-name" placeholder="Nama Murid Baru..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                    <button id="btn-add-student" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition shadow-sm">
+                        <i class="fas fa-plus"></i> Tambah
+                    </button>
+                </div>
+                <div class="space-y-3">
+            `;
+
+            if (state.students.length === 0) {
+                html += `<div class="text-center py-8 text-gray-400 bg-white rounded-xl border border-gray-100"><i class="fas fa-users mb-2 text-2xl"></i><br>Belum ada murid.</div>`;
+            } else {
+                state.students.forEach(student => {
+                    // Count records for this student in memory
+                    const studentRecords = state.records.filter(r => r.studentId === student.id);
+                    
+                    html += `
+                        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center justify-between hover:border-emerald-200 transition">
+                            <div>
+                                <h3 class="font-bold text-gray-800">${escapeHtml(student.name)}</h3>
+                                <p class="text-xs text-gray-500 mb-1">NIS: ${escapeHtml(student.nis)} <span class="mx-1">•</span> Kelas: ${escapeHtml(student.kelas)}</p>
+                                <p class="text-xs text-emerald-600 font-medium bg-emerald-50 inline-block px-2 py-0.5 rounded-full">${studentRecords.length} Catatan Hafalan</p>
+                            </div>
+                            <button data-id="${student.id}" class="btn-view-student text-emerald-600 hover:bg-emerald-100 bg-emerald-50 px-3 py-2 rounded-lg text-sm font-medium transition flex flex-col items-center gap-1">
+                                <i class="fas fa-plus-circle"></i>
+                                <span class="text-[10px]">Nilai</span>
+                            </button>
+                        </div>
+                    `;
+                });
+            }
+            html += `</div>`;
+            return html;
+        }
+
+        function getRecordFormHTML() {
+            let studentOptions = `<option value="">-- Pilih Murid --</option>`;
+            state.students.forEach(s => {
+                const selected = state.selectedStudentForRecord === s.id ? 'selected' : '';
+                studentOptions += `<option value="${s.id}" ${selected}>${escapeHtml(s.name)}</option>`;
+            });
+
+            let surahOptions = `<option value="">-- Pilih Surah --</option>`;
+            SURAHS.forEach(s => {
+                surahOptions += `<option value="${s}">${s}</option>`;
+            });
+
+            let gradeOptions = `<option value="">-- Pilih Nilai --</option>`;
+            Object.entries(GRADES).forEach(([key, val]) => {
+                gradeOptions += `<option value="${key}">${val.label}</option>`;
+            });
+
+            return `
+                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100 fade-in">
+                    <h3 class="font-bold text-gray-800 mb-4 border-b pb-2">Catat Hafalan Baru</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Nama Murid</label>
+                            <select id="form-student" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                                ${studentOptions}
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Surah</label>
+                                <select id="form-surah" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                                    ${surahOptions}
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">Ayat</label>
+                                <input type="text" id="form-ayah" placeholder="Cth: 1-10" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Predikat Nilai</label>
+                            <select id="form-grade" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm">
+                                ${gradeOptions}
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Catatan Guru (Opsional)</label>
+                            <textarea id="form-notes" rows="2" placeholder="Cth: Perbaiki makhraj huruf Ra'" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm"></textarea>
+                        </div>
+
+                        <button id="btn-submit-record" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg shadow-md transition mt-2">
+                            Simpan Hafalan
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderStudentDashboard() {
+            // Find student details
+            const student = state.students.find(s => s.id === state.currentStudentId);
+            if (!student) {
+                state.view = 'LOGIN';
+                render();
+                return;
+            }
+
+            // Filter records for this student in memory
+            const myRecords = state.records.filter(r => r.studentId === student.id);
+
+            let headerHTML = `
+                <div class="mb-6 bg-emerald-600 text-white p-5 rounded-xl shadow-md flex items-center gap-4">
+                    <div class="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center text-2xl shrink-0">
+                        <i class="fas fa-user-graduate"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-xl font-bold">${escapeHtml(student.name)}</h2>
+                        <p class="text-emerald-100 text-sm mt-0.5">NIS: ${escapeHtml(student.nis)} • Kelas: ${escapeHtml(student.kelas)}</p>
+                    </div>
+                </div>
+                <h3 class="font-bold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-history text-emerald-600"></i> Riwayat Hafalan
+                </h3>
+            `;
+
+            let recordsHTML = `<div class="space-y-3 pb-10">`;
+            if (myRecords.length === 0) {
+                recordsHTML += `
+                    <div class="text-center py-10 bg-white rounded-xl border border-gray-100 shadow-sm">
+                        <div class="text-gray-300 mb-3"><i class="fas fa-box-open text-4xl"></i></div>
+                        <p class="text-gray-500">Belum ada catatan hafalan.</p>
+                        <p class="text-sm text-gray-400 mt-1">Setorkan hafalanmu ke guru!</p>
+                    </div>
+                `;
+            } else {
+                myRecords.forEach(record => {
+                    const gradeInfo = GRADES[record.grade] || { label: record.grade, color: "bg-gray-100 text-gray-800" };
+                    const dateStr = record.timestamp ? new Date(record.timestamp).toLocaleDateString('id-ID', {day: 'numeric', month: 'short', year: 'numeric'}) : 'Baru saja';
+                    
+                    recordsHTML += `
+                        <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden">
+                            <div class="absolute top-0 right-0 p-2">
+                                <span class="text-[10px] text-gray-400 font-medium">${dateStr}</span>
+                            </div>
+                            <div class="mb-2 pr-16">
+                                <h4 class="font-bold text-gray-800 text-lg">Surah ${escapeHtml(record.surah)}</h4>
+                                <p class="text-sm text-gray-500">Ayat: ${escapeHtml(record.ayah)}</p>
+                            </div>
+                            
+                            <div class="inline-block px-2.5 py-1 rounded-md text-xs font-semibold mb-2 ${gradeInfo.color}">
+                                ${gradeInfo.label}
+                            </div>
+
+                            ${record.notes ? `
+                            <div class="mt-2 p-3 bg-gray-50 rounded-lg text-sm text-gray-700 border border-gray-100 flex gap-2">
+                                <i class="fas fa-comment-dots text-emerald-500 mt-1"></i>
+                                <span class="italic">"${escapeHtml(record.notes)}"</span>
+                            </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+            }
+            recordsHTML += `</div>`;
+
+            appContainer.innerHTML = `<div class="fade-in">${headerHTML}${recordsHTML}</div>`;
+        }
+
+        // --- EVENTS & ACTIONS ---
+
+        document.addEventListener('click', async (e) => {
+            
+            // Brand click -> home
+            if (e.target.closest('#nav-brand')) {
+                if (state.currentUserRole) {
+                    state.view = state.currentUserRole === 'TEACHER' ? 'TEACHER_DASHBOARD' : 'STUDENT_DASHBOARD';
+                    render();
+                }
+            }
+
+            // Logout
+            if (e.target.closest('#btn-logout')) {
+                state.currentUserRole = null;
+                state.currentStudentId = null;
+                state.view = 'LOGIN';
+                render();
+                showToast("Berhasil keluar", "success");
+            }
+
+            // --- LOGIN ACTIONS ---
+
+            if (e.target.closest('#show-teacher-login')) {
+                const modal = `
+                    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 fade-in" id="modal-backdrop">
+                        <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm" id="modal-content">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="font-bold text-lg text-gray-800">Login Guru</h3>
+                                <button id="btn-close-modal" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+                            </div>
+                            <p class="text-sm text-gray-500 mb-4">Masukkan PIN Guru (Untuk demo ini, PIN adalah: <strong class="text-emerald-600">123456</strong>)</p>
+                            <input type="password" id="teacher-pin" class="w-full p-3 border border-gray-300 rounded-lg text-center tracking-widest text-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4" placeholder="••••••">
+                            <button id="btn-login-teacher-submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition">Masuk</button>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('login-modal-container').innerHTML = modal;
+            }
+
+            if (e.target.closest('#show-student-login')) {
+                let options = `<option value="">-- Pilih Namamu --</option>`;
+                if (state.students.length === 0) {
+                    options = `<option value="">Belum ada data murid</option>`;
+                } else {
+                    state.students.forEach(s => {
+                        options += `<option value="${s.id}">${escapeHtml(s.name)}</option>`;
+                    });
+                }
+
+                const modal = `
+                    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 fade-in" id="modal-backdrop">
+                        <div class="bg-white p-6 rounded-2xl shadow-xl w-full max-w-sm" id="modal-content">
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="font-bold text-lg text-gray-800">Masuk Murid</h3>
+                                <button id="btn-close-modal" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+                            </div>
+                            <p class="text-sm text-gray-500 mb-4">Pilih namamu dari daftar untuk melihat catatan hafalan.</p>
+                            <select id="student-select" class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-4">
+                                ${options}
+                            </select>
+                            <button id="btn-login-student-submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-lg transition">Lihat Hafalan</button>
+                        </div>
+                    </div>
+                `;
+                document.getElementById('login-modal-container').innerHTML = modal;
+            }
+
+            if (e.target.closest('#btn-close-modal') || (e.target.id === 'modal-backdrop')) {
+                document.getElementById('login-modal-container').innerHTML = '';
+            }
+
+            if (e.target.closest('#btn-login-teacher-submit')) {
+                const pin = document.getElementById('teacher-pin').value;
+                if (pin === '123456') {
+                    document.getElementById('login-modal-container').innerHTML = '';
+                    state.currentUserRole = 'TEACHER';
+                    state.view = 'TEACHER_DASHBOARD';
+                    render();
+                    showToast("Berhasil login sebagai Guru", "success");
+                } else {
+                    showToast("PIN Salah!", "error");
+                }
+            }
+
+            if (e.target.closest('#btn-login-student-submit')) {
+                const studentId = document.getElementById('student-select').value;
+                if (!studentId) {
+                    showToast("Silakan pilih nama terlebih dahulu", "error");
+                    return;
+                }
+                document.getElementById('login-modal-container').innerHTML = '';
+                state.currentUserRole = 'STUDENT';
+                state.currentStudentId = studentId;
+                state.view = 'STUDENT_DASHBOARD';
+                render();
+                showToast("Selamat datang!", "success");
+            }
+
+            // --- EXPORT ACTION ---
+            if (e.target.closest('#btn-export-csv')) {
+                exportToCSV();
+            }
+
+            if (e.target.closest('#btn-copy-sheets')) {
+                copyForGoogleSheets();
+            }
+
+
+            // --- TEACHER ACTIONS ---
+
+            if (e.target.closest('#tab-list')) {
+                document.getElementById('tab-list').className = "flex-1 py-2 text-center font-semibold text-emerald-600 border-b-2 border-emerald-600";
+                document.getElementById('tab-add').className = "flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent hover:text-emerald-600 transition";
+                document.getElementById('teacher-content').innerHTML = getStudentsListHTML();
+            }
+
+            if (e.target.closest('#tab-add')) {
+                document.getElementById('tab-add').className = "flex-1 py-2 text-center font-semibold text-emerald-600 border-b-2 border-emerald-600";
+                document.getElementById('tab-list').className = "flex-1 py-2 text-center font-semibold text-gray-500 border-b-2 border-transparent hover:text-emerald-600 transition";
+                document.getElementById('teacher-content').innerHTML = getRecordFormHTML();
+            }
+
+            if (e.target.closest('#btn-add-student')) {
+                const input = document.getElementById('new-student-name');
+                const name = input.value.trim();
+                if (!name) return;
+                
+                const studentId = 'temp-' + Date.now();
+                state.students.push({ id: studentId, name: name, nis: '-', kelas: '-' });
+                state.students.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                
+                input.value = '';
+                showToast("Murid ditambahkan sementara.", "info");
+                document.getElementById('teacher-content').innerHTML = getStudentsListHTML();
+            }
+
+            if (e.target.closest('.btn-view-student')) {
+                const studentId = e.target.closest('.btn-view-student').dataset.id;
+                state.selectedStudentForRecord = studentId;
+                // Switch to Add Record Tab
+                document.getElementById('tab-add').click();
+            }
+
+            if (e.target.closest('#btn-submit-record')) {
+                const studentId = document.getElementById('form-student').value;
+                const surah = document.getElementById('form-surah').value;
+                const ayah = document.getElementById('form-ayah').value.trim();
+                const grade = document.getElementById('form-grade').value;
+                const notes = document.getElementById('form-notes').value.trim();
+
+                if (!studentId || !surah || !ayah || !grade) {
+                    showToast("Harap isi semua kolom wajib (Murid, Surah, Ayat, Nilai)", "error");
+                    return;
+                }
+
+                const btn = e.target.closest('#btn-submit-record');
+                const originalText = btn.innerHTML;
+                btn.disabled = true;
+                btn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Menyimpan...`;
+
+                setTimeout(() => {
+                    state.records.unshift({
+                        id: 'local-' + Date.now(),
+                        studentId: studentId,
+                        surah: surah,
+                        ayah: ayah,
+                        grade: grade,
+                        notes: notes,
+                        timestamp: Date.now()
+                    });
+                    
+                    showToast("Tersimpan secara lokal. (Browser tidak bisa mengedit Google Sheets secara langsung tanpa API Backend)", "info");
+                    
+                    // Reset form fields
+                    document.getElementById('form-surah').value = '';
+                    document.getElementById('form-ayah').value = '';
+                    document.getElementById('form-grade').value = '';
+                    document.getElementById('form-notes').value = '';
+                    
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                }, 500);
+            }
+
+        });
+
+        // --- UTILS ---
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            
+            let bgClass = 'bg-gray-800 text-white';
+            let icon = 'fa-info-circle';
+            
+            if (type === 'success') { bgClass = 'bg-emerald-600 text-white'; icon = 'fa-check-circle'; }
+            if (type === 'error') { bgClass = 'bg-red-500 text-white'; icon = 'fa-exclamation-circle'; }
+
+            toast.className = `${bgClass} p-3 rounded-lg shadow-lg flex items-center gap-3 text-sm font-medium fade-in pointer-events-auto transition-opacity duration-300`;
+            toast.innerHTML = `<i class="fas ${icon}"></i> <span>${escapeHtml(message)}</span>`;
+            
+            toastContainer.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function escapeHtml(unsafe) {
+            if (!unsafe) return '';
+            return (unsafe+'')
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function exportToCSV() {
+            if (state.records.length === 0) {
+                showToast("Belum ada data nilai untuk diekspor", "error");
+                return;
+            }
+
+            // Header CSV
+            const headers = ["Nama", "NIS", "Kelas", "Surah", "Ayat", "Predikat", "Catatan", "Tanggal"];
+            let csvRows = [headers.join(",")];
+
+            // Isi Data
+            state.records.forEach(record => {
+                const student = state.students.find(s => s.id === record.studentId) || {};
+                
+                // Escape quotes untuk format CSV yang aman
+                const name = `"${(student.name || '-').replace(/"/g, '""')}"`;
+                const nis = `"${student.nis || '-'}"`;
+                const kelas = `"${student.kelas || '-'}"`;
+                const surah = `"${record.surah}"`;
+                const ayah = `"${record.ayah}"`;
+                const gradeInfo = GRADES[record.grade] ? GRADES[record.grade].label : record.grade;
+                const grade = `"${gradeInfo}"`;
+                const notes = `"${(record.notes || '').replace(/"/g, '""')}"`;
+                
+                // Format tanggal ke lokal
+                const dateObj = new Date(record.timestamp);
+                const date = `"${dateObj.toLocaleDateString('id-ID')} ${dateObj.toLocaleTimeString('id-ID')}"`;
+
+                csvRows.push([name, nis, kelas, surah, ayah, grade, notes, date].join(","));
+            });
+
+            // Gunakan Blob dengan BOM (\uFEFF) agar UTF-8 dikenali secara otomatis oleh Microsoft Excel
+            const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            
+            // Trigger download
+            const link = document.createElement("a");
+            link.setAttribute("href", url);
+            const dateStr = new Date().toISOString().slice(0, 10);
+            link.setAttribute("download", `Rekap_Hafalan_${dateStr}.csv`);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showToast("Data berhasil diekspor!", "success");
+        }
+
+        function copyForGoogleSheets() {
+            if (state.records.length === 0) {
+                showToast("Belum ada data nilai untuk disalin", "error");
+                return;
+            }
+
+            // Gunakan format Tab-Separated Values (TSV) agar saat di-paste ke Google Sheets langsung rapi per kolom
+            const headers = ["Nama", "NIS", "Kelas", "Surah", "Ayat", "Predikat", "Catatan", "Tanggal"];
+            let tsvRows = [headers.join("\t")];
+
+            state.records.forEach(record => {
+                const student = state.students.find(s => s.id === record.studentId) || {};
+                
+                const name = (student.name || '-');
+                const nis = (student.nis || '-');
+                const kelas = (student.kelas || '-');
+                const surah = record.surah;
+                const ayah = record.ayah;
+                const gradeInfo = GRADES[record.grade] ? GRADES[record.grade].label : record.grade;
+                const notes = (record.notes || '').replace(/\n/g, ' '); // Hilangkan enter agar tidak merusak baris
+                
+                const dateObj = new Date(record.timestamp);
+                const date = `${dateObj.toLocaleDateString('id-ID')} ${dateObj.toLocaleTimeString('id-ID')}`;
+
+                tsvRows.push([name, nis, kelas, surah, ayah, gradeInfo, notes, date].join("\t"));
+            });
+
+            const tsvString = tsvRows.join("\n");
+            
+            // Gunakan execCommand untuk copy ke clipboard
+            const textArea = document.createElement("textarea");
+            textArea.value = tsvString;
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
+                document.execCommand('copy');
+                showToast("Data disalin! Buka Google Sheets & tekan Ctrl+V (Paste).", "success");
+            } catch (err) {
+                showToast("Gagal menyalin data.", "error");
+            }
+            document.body.removeChild(textArea);
+        }
+
+        // Boot
+        window.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
